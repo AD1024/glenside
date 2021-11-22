@@ -914,6 +914,21 @@ pub fn bubble_reshape_through_compute_dot_product() -> RW {
              if is_dot_product("?op".parse().unwrap()))
 }
 
+pub fn merge_region() -> RW {
+    fn same_region(a: Var, b: Var) -> impl Fn(&mut EG, egg::Id, &egg::Subst) -> bool {
+        move |egraph, _, subst| match (&egraph[subst[a]].data, &egraph[subst[b]].data) {
+            (MyAnalysisData::AcceleratorFunc(a), MyAnalysisData::AcceleratorFunc(b)) => {
+                a.accelerator == b.accelerator
+            }
+            _ => panic!(),
+        }
+    }
+    rewrite!("merge-accelerator-region";
+                "(accelerator-load ?dst (accelerator-store ?src ?x))"
+            => "?x"
+            if same_region("?dst".parse().unwrap(), "?src".parse().unwrap()))
+}
+
 pub fn conv2d_on_hlscnn() -> RW {
     fn is_one(g: Var) -> impl Fn(&mut EG, egg::Id, &egg::Subst) -> bool {
         move |egraph, _, subst| match &egraph[subst[g]].data {
@@ -924,7 +939,11 @@ pub fn conv2d_on_hlscnn() -> RW {
     rewrite!("conv2d-on-hlscnn";
             "(relay-operator-call relay-conv2d ?data ?kernel ?strides ?padding ?group ?channels ?kshape ?layout ?klayout)"
             =>
-            "(accelerator-call hlscnn-conv2d ?data ?kernel ?strides ?padding ?group ?channels ?kshape ?layout ?klayout (shape 0))"
+            // only load tensors not attributes (handled on host)
+            "(accelerator-store hlscnn-conv2d (accelerator-call hlscnn-conv2d 
+                                                  (accelerator-load hlscnn-conv2d ?data) 
+                                                  (accelerator-load hlscnn-conv2d ?kernel) 
+                                                  ?strides ?padding ?group ?channels ?kshape ?layout ?klayout (shape 0)))"
             if is_one("?group".parse().unwrap()))
 }
 
@@ -945,29 +964,11 @@ pub fn dot_product_with_vta() -> RW {
     }
     rewrite!("dot-product-on-vta";
         "(compute dot-product (access-cartesian-product ?x ?w))"
-        => "(accelerator-call vta-dense ?x ?w (shape 0))"
+        => "(accelerator-store vta-dense (accelerator-call vta-dense 
+                                                            (accelerator-load vta-dense ?x) 
+                                                            (accelerator-load vta-dense ?w) (shape 0)))"
             if dim_supported("?x".parse().unwrap())
             if dim_supported("?w".parse().unwrap()))
-}
-
-pub fn dot_product_to_linear() -> RW {
-    struct ApplierImpl(Var, Var);
-    impl Applier<Language, MyAnalysis> for ApplierImpl {
-        fn apply_one(&self, egraph: &mut EG, eclass: Id, subst: &Subst) -> Vec<Id> {
-            // let x_shape = match_shape_data(&egraph[subst[self.0]].data);
-            let w_shape = match_shape_data(&egraph[subst[self.1]].data);
-            format!(
-                "(accelerator-call flex-linear ?x ?w (constant-tensor 0 (shape 1 {})) (shape 0))",
-                w_shape[1]
-            )
-            .parse::<Pattern<_>>()
-            .unwrap()
-            .apply_one(egraph, eclass, subst)
-        }
-    }
-    rewrite!("dot-product-to-linear";
-        "(compute dot-product (access-cartesian-product (access ?x 1) (access ?w 1)))"
-        => {ApplierImpl("?x".parse().unwrap(), "?w".parse().unwrap())})
 }
 
 pub fn lstm_to_flexasr() -> RW {
@@ -1039,8 +1040,21 @@ pub fn lstm_to_flexasr() -> RW {
                 MyAnalysisData::AccessPattern(access) => access.as_vec(),
                 _ => panic!("invalid access pattern for LSTM"),
             };
-            format!("(accelerator-call flex-lstm ?x hidden0 hidden1 rnn_weight_ih_l0 rnn_weight_hh_l0 rnn_bias_ih_l0 rnn_bias_hh_l0 (shape {}))", out_shape.into_iter().map(|x| x.to_string()).join(" "))
-            .parse::<Pattern<_>>().unwrap().apply_one(egraph, eclass, subst)
+            format!(
+                "(accelerator-store flex-lstm (accelerator-call flex-lstm 
+                                                        (accelerator-load flex-lstm ?x) 
+                                                        (accelerator-load flex-lstm hidden0) 
+                                                        (accelerator-load flex-lstm hidden1) 
+                                                        (accelerator-load flex-lstm rnn_weight_ih_l0) 
+                                                        (accelerator-load flex-lstm rnn_weight_hh_l0) 
+                                                        (accelerator-load flex-lstm rnn_bias_ih_l0) 
+                                                        (accelerator-load flex-lstm rnn_bias_hh_l0) 
+                                                        (shape {})))",
+                out_shape.into_iter().map(|x| x.to_string()).join(" ")
+            )
+            .parse::<Pattern<_>>()
+            .unwrap()
+            .apply_one(egraph, eclass, subst)
         }
     }
     rewrite!("flex-lstm"; 
@@ -1161,7 +1175,10 @@ pub fn linear_layer_accelerator_rewrites() -> RW {
             ?bias
             ?axis)"
         =>
-        "(accelerator-call flex-linear ?x ?w ?bias (shape 0))")
+        "(accelerator-store flex-linear (accelerator-call flex-linear 
+                                    (accelerator-load flex-linear ?x)
+                                    (accelerator-load flex-linear ?w)
+                                    (accelerator-load flex-linear ?bias) (shape 0)))")
 }
 
 /// Experimental rewrite to convert Glenside matmuls into Relay denses. Pretty
@@ -2687,8 +2704,8 @@ pub fn flexasr_maxpool() -> Rewrite<Language, MyAnalysis> {
       (access-windows ?a (shape 2) (shape 2)))" =>
     "(access
       (access-transpose
-       (accelerator-call flex-maxpool
-        (access (access-transpose ?a (list 1 0)) 0) (shape 0))
+       (accelerator-store flex-maxpool (accelerator-call flex-maxpool
+        (access (access-transpose (accelerator-load flex-maxpool ?a) (list 1 0)) 0) (shape 0)))
        (list 1 0))
       1)"
     if constrain_access("?a".parse().unwrap(), move |a| {
@@ -5845,5 +5862,43 @@ mod tests {
             .unwrap()
             .search_eclass(&runner.egraph, id)
             .is_none());
+    }
+
+    #[test]
+    fn test_accelerator_merge_region() {
+        let shape_dict = [
+            ("data".into(), vec![3, 32]),
+            ("weights_0".into(), vec![10, 32]),
+            ("weights_1".into(), vec![10, 10]),
+        ]
+        .iter()
+        .cloned()
+        .collect::<HashMap<String, _>>();
+        let name_to_dtype = HashMap::default();
+        let program = "(accelerator-store vta-dense
+                                (accelerator-call vta-dense 
+                                    (accelerator-load vta-dense
+                                        (accelerator-store 
+                                            vta-dense (accelerator-call vta-dense
+                                                        (accelerator-load vta-dense (access-tensor data))
+                                                        (accelerator-load vta-dense (access-tensor weights_0)))))
+                                    (accelerator-load vta-dense (access-tensor weights_1))))";
+        let mut egraph = egg::EGraph::<Language, MyAnalysis>::new(MyAnalysis {
+            name_to_shape: shape_dict.into(),
+            name_to_dtype,
+        });
+        let _root = egraph.add_expr(&program.parse().unwrap());
+        let rws = vec![merge_region()];
+        let runner = Runner::<_, _, ()>::new(MyAnalysis::default())
+            .with_egraph(egraph)
+            .run(&rws);
+        let search_result = "(accelerator-store vta-dense
+                                                (accelerator-call vta-dense 
+                                                    (accelerator-call vta-dense
+                                                        (accelerator-load vta-dense (access-tensor ?data))
+                                                        (accelerator-load vta-dense (access-tensor ?weights_0)))
+                                                    (accelerator-load vta-dense (access-tensor ?weights_1))))"
+                                        .parse::<Pattern<_>>().unwrap().search(&runner.egraph);
+        assert_eq!(search_result.len(), 1);
     }
 }

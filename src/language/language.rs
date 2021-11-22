@@ -291,8 +291,8 @@ define_language! {
 
         "accelerator-call" = AcceleratorCall(Box<[Id]>),
 
-        "accelerator-load" = AcceleratorLoad(Id),
-        "accelerator-store" = AcceleratorStore(Id),
+        "accelerator-load" = AcceleratorLoad([Id; 2]),
+        "accelerator-store" = AcceleratorStore([Id; 2]),
 
         // (constant-tensor <value> <shape>)
         "constant-tensor" = ConstantTensor([Id; 2]),
@@ -752,8 +752,8 @@ impl Display for AcceleratorFunc {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AcceleratorFuncData {
-    pattern: AcceleratorFunc,
-    accelerator: String,
+    pub pattern: AcceleratorFunc,
+    pub accelerator: String,
 }
 
 // TODO(@gussmith23) Pick a better analysis name.
@@ -1537,8 +1537,7 @@ impl egg::Analysis<Language> for MyAnalysis {
     fn make(egraph: &EGraph<Language, Self>, enode: &Language) -> Self::Data {
         use Language::*;
         match enode {
-            &AcceleratorLoad(id)
-            | &AcceleratorStore(id) => egraph[id].data.clone(),
+            &AcceleratorLoad(id) | &AcceleratorStore(id) => egraph[id[1]].data.clone(),
             &SystolicArrayConv2dIm2colNhwcHwioWithBlocking(
                 [rows_id, cols_id, weights_id, data_id, kh_id, kw_id, stride_h_id, stride_w_id],
             ) => {

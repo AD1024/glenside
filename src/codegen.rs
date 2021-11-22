@@ -305,9 +305,7 @@ pub fn find_vars(expr: &Expr, id: Id) -> Vec<String> {
                 set.insert(s.to_string());
             }
             // Id
-            &Language::AcceleratorLoad(id)
-            | &Language::AcceleratorStore(id)
-            | &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
+            &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
                 find_vars_recursive_helper(set, expr, id);
             }
             // Box<[Id]>
@@ -328,6 +326,8 @@ pub fn find_vars(expr: &Expr, id: Id) -> Vec<String> {
             }
             // [Id; 2]
             &Language::Access(ids)
+            | &Language::AcceleratorLoad(ids)
+            | &Language::AcceleratorStore(ids)
             | &Language::AccessTranspose(ids)
             | &Language::AccessReshape(ids)
             | &Language::ShapeInsertAxis(ids)
@@ -416,9 +416,7 @@ pub fn generate_worklist_for_codegen(expr: &Expr, id: Id) -> Vec<Id> {
             &expr[id].nodes[0]
         } {
             // Id
-            &Language::AcceleratorLoad(id)
-            | &Language::AcceleratorStore(id)
-            | &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
+            &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
                 helper(worklist, expr, id);
             }
             // [Id; 1]
@@ -439,6 +437,8 @@ pub fn generate_worklist_for_codegen(expr: &Expr, id: Id) -> Vec<Id> {
             }
             // [Id; 2]
             &Language::Access(ids)
+            | &Language::AcceleratorLoad(ids)
+            | &Language::AcceleratorStore(ids)
             | &Language::AccessTranspose(ids)
             | &Language::AccessShape(ids)
             | &Language::ConstantTensor(ids)

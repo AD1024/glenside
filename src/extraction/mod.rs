@@ -124,7 +124,7 @@ impl egg::CostFunction<Language> for MonolithicCostFunction<'_> {
                 crate::language::ComputeType::Softmax => 1,
                 crate::language::ComputeType::ReduceMean => 1,
             }
-            
+
             Language::AcceleratorLoad(_)
             | Language::AcceleratorStore(_) => 100000,
 
@@ -211,8 +211,7 @@ impl CostFunction<Language> for SimpleCostFunction {
                 }
             }
             // Extracting various access patterns is essential.
-            AcceleratorLoad(_)
-            | AcceleratorStore(_) => 100000,
+            AcceleratorLoad(_) | AcceleratorStore(_) => 100000,
             AccessWindows(_)
             | Access(_)
             | AccessLiteral(_)
@@ -301,8 +300,7 @@ impl CostFunction<Language> for AcceleratorCostFunction {
             // Accelerator Load & Store are high costs
             // but should not be larger than constructs that
             // are not favorable for extraction
-            Language::AcceleratorLoad(_)
-            | Language::AcceleratorStore(_) => self.0,
+            Language::AcceleratorLoad(_) | Language::AcceleratorStore(_) => self.0,
             Language::AccessCartesianProduct(_)
             | Language::Slice(_)
             | Language::MoveAxis(_)
