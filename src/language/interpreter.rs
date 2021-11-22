@@ -126,6 +126,8 @@ where
     usize: num_traits::cast::AsPrimitive<DataType>,
 {
     match &expr.as_ref()[index] {
+        &Language::AcceleratorLoad(_) => todo!(),
+        &Language::AcceleratorStore(_) => todo!(),
         &Language::SystolicArrayConv2dIm2colNchwOihwWithBlocking(_) => todo!(),
         &Language::SystolicArrayConv2dIm2colNhwcHwioWithBlocking(_) => todo!(),
         &Language::SystolicArrayConv2dNchwOihwWithBlocking(_) => todo!(),

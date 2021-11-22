@@ -305,7 +305,9 @@ pub fn find_vars(expr: &Expr, id: Id) -> Vec<String> {
                 set.insert(s.to_string());
             }
             // Id
-            &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
+            &Language::AcceleratorLoad(id)
+            | &Language::AcceleratorStore(id)
+            | &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
                 find_vars_recursive_helper(set, expr, id);
             }
             // Box<[Id]>
@@ -414,7 +416,9 @@ pub fn generate_worklist_for_codegen(expr: &Expr, id: Id) -> Vec<Id> {
             &expr[id].nodes[0]
         } {
             // Id
-            &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
+            &Language::AcceleratorLoad(id)
+            | &Language::AcceleratorStore(id)
+            | &Language::AccessTensor(id) | &Language::AccessFlatten(id) => {
                 helper(worklist, expr, id);
             }
             // [Id; 1]
@@ -687,6 +691,8 @@ fn codegen_helper(
         &expr[id].nodes[0]
     } {
         // TODO(mike): we probably could make codegen happen here
+        Language::AcceleratorLoad(_) => None,
+        Language::AcceleratorStore(_) => None,
         Language::AcceleratorCall(_ids) => None,
         Language::ConstantTensor(_ids) => None,
         Language::AcceleratorFunc(_) => None,

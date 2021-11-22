@@ -291,6 +291,9 @@ define_language! {
 
         "accelerator-call" = AcceleratorCall(Box<[Id]>),
 
+        "accelerator-load" = AcceleratorLoad(Id),
+        "accelerator-store" = AcceleratorStore(Id),
+
         // (constant-tensor <value> <shape>)
         "constant-tensor" = ConstantTensor([Id; 2]),
 
@@ -1534,6 +1537,8 @@ impl egg::Analysis<Language> for MyAnalysis {
     fn make(egraph: &EGraph<Language, Self>, enode: &Language) -> Self::Data {
         use Language::*;
         match enode {
+            &AcceleratorLoad(id)
+            | &AcceleratorStore(id) => egraph[id].data.clone(),
             &SystolicArrayConv2dIm2colNhwcHwioWithBlocking(
                 [rows_id, cols_id, weights_id, data_id, kh_id, kw_id, stride_h_id, stride_w_id],
             ) => {
