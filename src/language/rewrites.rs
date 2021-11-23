@@ -932,16 +932,13 @@ pub fn merge_region() -> RW {
                         .parse::<Pattern<_>>()
                         .unwrap()
                         .search_eclass(egraph, subst[self.0]) {
-                if egraph[subst[self.0]].parents.len() > 1 {
-                    return vec![];
+                let dst_region = get_region(self.1, egraph, subst);
+                let src_region = get_region("?src".parse().unwrap(), egraph, &match_result.substs[0]);
+                log::info!("Accelerator Regions: {} {}", dst_region, src_region);
+                if dst_region == src_region {
+                    return "?x".parse::<Pattern<_>>().unwrap().apply_one(egraph, eclass, &match_result.substs[0]);
                 } else {
-                    let dst_region = get_region(self.1, egraph, subst);
-                    let src_region = get_region("?src".parse().unwrap(), egraph, &match_result.substs[0]);
-                    if dst_region == src_region {
-                        return "?x".parse::<Pattern<_>>().unwrap().apply_one(egraph, eclass, &match_result.substs[0]);
-                    } else {
-                        return vec![];
-                    }
+                    return vec![];
                 }
             } else {
                 return vec![];
@@ -979,7 +976,7 @@ pub fn access_reshape_to_relay() -> RW {
 pub fn relu_on_vta() -> RW {
     rewrite!("relu-on-vta"; 
                "(relay-operator-call relay-relu ?x)"
-            => "(accelerator-store vta-relu (accelerator-call vta-relu (accelerator-load vta-relu ?x)))")
+            => "(accelerator-store vta-relu (accelerator-call vta-relu (accelerator-load vta-relu ?x) (shape 0)))")
 }
 
 pub fn dot_product_with_vta() -> RW {
@@ -993,7 +990,7 @@ pub fn dot_product_with_vta() -> RW {
         }
     }
     rewrite!("dot-product-on-vta";
-        "(compute dot-product (access-cartesian-product ?x ?w))"
+        "(compute dot-product (access-cartesian-product (access ?x ?dim_x) (access ?w ?dim_w)))"
         => "(accelerator-store vta-dense (accelerator-call vta-dense 
                                                             (accelerator-load vta-dense ?x) 
                                                             (accelerator-load vta-dense ?w) (shape 0)))"

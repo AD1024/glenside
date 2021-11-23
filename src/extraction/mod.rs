@@ -300,7 +300,7 @@ impl CostFunction<Language> for AcceleratorCostFunction {
             // Accelerator Load & Store are high costs
             // but should not be larger than constructs that
             // are not favorable for extraction
-            Language::AcceleratorLoad(_) | Language::AcceleratorStore(_) => self.0,
+            Language::AcceleratorLoad(_) | Language::AcceleratorStore(_) => self.0 / 20.0,
             Language::AccessCartesianProduct(_)
             | Language::Slice(_)
             | Language::MoveAxis(_)
