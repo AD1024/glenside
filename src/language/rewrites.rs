@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::{Language, MyAnalysis, MyAnalysisData, PadType, RangeSet2};
@@ -973,6 +974,12 @@ pub fn conv2d_on_hlscnn() -> RW {
 pub fn access_reshape_to_relay() -> RW {
     rewrite!("access-reshape-to-reshape";
         "(access-reshape ?access (access-shape ?shape (shape)))" => "(relay-operator-call relay-reshape ?access ?shape)")
+}
+
+pub fn relu_on_vta() -> RW {
+    rewrite!("relu-on-vta"; 
+               "(relay-operator-call relay-relu ?x)"
+            => "(accelerator-store vta-relu (accelerator-call vta-relu (accelerator-load vta-relu ?x)))")
 }
 
 pub fn dot_product_with_vta() -> RW {
@@ -5925,3 +5932,21 @@ mod tests {
         assert_eq!(search_result.len(), 1);
     }
 }
+
+    #[test]
+    fn test_vta_relu() {
+        let shape_dict = [("data".into(), vec![3, 4])].iter().cloned().collect::<HashMap<String, _>>();
+        let program = "(relay-operator-call relay-relu data)";
+        let mut egraph = egg::EGraph::<Language, MyAnalysis>::new(MyAnalysis {
+            name_to_shape: shape_dict.into(),
+            name_to_dtype: HashMap::default(),
+        });
+        let root = egraph.add_expr(&program.parse().unwrap());
+        let rws = vec![relu_on_vta()];
+        let runner = egg::Runner::<_, _, ()>::new(MyAnalysis::default()).with_egraph(egraph).run(&rws);
+        let search_result = "(accelerator-store vta-relu (accelerator-call vta-relu (accelerator-load vta-relu data)))"
+                                                .parse::<Pattern<_>>()
+                                                .unwrap()
+                                                .search_eclass(&runner.egraph, root);
+        assert!(search_result.is_some());
+    }

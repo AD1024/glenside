@@ -705,6 +705,7 @@ pub enum AcceleratorFunc {
     VTADense,
     VTAConv1D,
     HlsCNNConv2D,
+    VTARelu,
     // (accelerator-call flex-maxpool <access>)
     //
     // Compute's FlexASR's maxpool operator. The input access should be of
@@ -725,6 +726,7 @@ impl FromStr for AcceleratorFunc {
             "flex-linear" => Ok(AcceleratorFunc::FlexLinear),
             "flex-lstm" => Ok(AcceleratorFunc::FlexLSTM),
             "vta-dense" => Ok(AcceleratorFunc::VTADense),
+            "vta-relu" => Ok(AcceleratorFunc::VTARelu),
             "vta-conv1d" => Ok(AcceleratorFunc::VTAConv1D),
             "hlscnn-conv2d" => Ok(AcceleratorFunc::HlsCNNConv2D),
             "flex-maxpool" => Ok(AcceleratorFunc::FlexASRMaxPool),
@@ -739,6 +741,7 @@ impl Display for AcceleratorFunc {
             f,
             "{}",
             match self {
+                AcceleratorFunc::VTARelu => "vta-relu",
                 AcceleratorFunc::FlexLinear => "flex-linear",
                 AcceleratorFunc::FlexLSTM => "flex-lstm",
                 AcceleratorFunc::VTADense => "vta-dense",
@@ -1758,6 +1761,25 @@ impl egg::Analysis<Language> for MyAnalysis {
                     ),
                 };
                 match accelerator_func_data.pattern {
+                    crate::language::AcceleratorFunc::VTARelu => {
+                        match &egraph[ids[1]].data {
+                            MyAnalysisData::AccessPattern(access) => MyAnalysisData::AccessPattern(AccessPatternData {
+                                shape: access.shape.clone(),
+                                item_shape: access.item_shape.clone(),
+                                relay_shape: access.relay_shape.clone(),
+                                contains_accelerator_calls: true,
+                                zero_regions: HashMap::default(),
+                            }),
+                            MyAnalysisData::Shape(shape_data) => MyAnalysisData::AccessPattern(AccessPatternData {
+                                shape: shape_data.shape.clone(),
+                                item_shape: IxDyn(&[]),
+                                zero_regions: HashMap::default(),
+                                contains_accelerator_calls: true,
+                                relay_shape: Some(IxDyn(shape_data.shape.slice()))
+                            }),
+                            _ => panic!("invalid call to VTARelu"),
+                        }
+                    }
                     crate::language::AcceleratorFunc::FlexLSTM => {
                         let out_shape = match &egraph[ids[ids.len() - 1]].data {
                             MyAnalysisData::Shape(shape) => shape.shape.slice().to_vec(),
@@ -1889,6 +1911,7 @@ impl egg::Analysis<Language> for MyAnalysis {
                     | crate::language::AcceleratorFunc::FlexASRMaxPool
                     | crate::language::AcceleratorFunc::FlexLSTM => "flexnlp",
                     crate::language::AcceleratorFunc::VTAConv1D
+                    | crate::language::AcceleratorFunc::VTARelu
                     | crate::language::AcceleratorFunc::VTADense => "vta",
                     crate::language::AcceleratorFunc::HlsCNNConv2D => "hlscnn",
                 };
@@ -2805,6 +2828,13 @@ impl egg::Analysis<Language> for MyAnalysis {
                             .collect::<Vec<_>>()[..]
                         {
                             [MyAnalysisData::AccessPattern(a)] => a.clone(),
+                            [MyAnalysisData::Shape(shape_data)] => AccessPatternData {
+                                shape: IxDyn(&shape_data.shape.slice()),
+                                item_shape: IxDyn(&[]),
+                                relay_shape: Some(IxDyn(&shape_data.shape.slice())),
+                                contains_accelerator_calls: false,
+                                zero_regions: HashMap::default(),
+                            },
                             _ => panic!("Parameters do not type check"),
                         };
 
