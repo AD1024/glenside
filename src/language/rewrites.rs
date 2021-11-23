@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use super::{Language, MyAnalysis, MyAnalysisData, PadType, RangeSet2};
+use egg::Searcher;
 use egg::{rewrite, Applier, ConditionalApplier, EGraph, Id, Pattern, Rewrite, Subst, Var};
 use itertools::Itertools;
 use ndarray::Dimension;
@@ -915,18 +916,40 @@ pub fn bubble_reshape_through_compute_dot_product() -> RW {
 }
 
 pub fn merge_region() -> RW {
-    fn same_region(a: Var, b: Var) -> impl Fn(&mut EG, egg::Id, &egg::Subst) -> bool {
-        move |egraph, _, subst| match (&egraph[subst[a]].data, &egraph[subst[b]].data) {
-            (MyAnalysisData::AcceleratorFunc(a), MyAnalysisData::AcceleratorFunc(b)) => {
-                a.accelerator == b.accelerator
+    fn get_region(a: Var, egraph: &EG, subst: &Subst) -> String {
+        match &egraph[subst[a]].data {
+            MyAnalysisData::AcceleratorFunc(a) => {
+                a.accelerator.clone()
             }
             _ => panic!(),
         }
     }
+    struct RegionMergeApplier(Var, Var);
+    impl Applier<Language, MyAnalysis> for RegionMergeApplier {
+        fn apply_one(&self, egraph: &mut EGraph<Language, MyAnalysis>, eclass: Id, subst: &Subst) -> Vec<Id> {
+            if let Some(match_result) = "(accelerator-store ?src ?x)"
+                        .parse::<Pattern<_>>()
+                        .unwrap()
+                        .search_eclass(egraph, subst[self.0]) {
+                if egraph[subst[self.0]].parents.len() > 1 {
+                    return vec![];
+                } else {
+                    let dst_region = get_region(self.1, egraph, subst);
+                    let src_region = get_region("?src".parse().unwrap(), egraph, &match_result.substs[0]);
+                    if dst_region == src_region {
+                        return "?x".parse::<Pattern<_>>().unwrap().apply_one(egraph, eclass, &match_result.substs[0]);
+                    } else {
+                        return vec![];
+                    }
+                }
+            } else {
+                return vec![];
+            }
+        }
+    }
     rewrite!("merge-accelerator-region";
-                "(accelerator-load ?dst (accelerator-store ?src ?x))"
-            => "?x"
-            if same_region("?dst".parse().unwrap(), "?src".parse().unwrap()))
+                "(accelerator-load ?dst ?data)"
+            => { RegionMergeApplier("?data".parse().unwrap(), "?dst".parse().unwrap()) })
 }
 
 pub fn conv2d_on_hlscnn() -> RW {
