@@ -934,7 +934,7 @@ pub fn merge_region() -> RW {
                         .search_eclass(egraph, subst[self.0]) {
                 let dst_region = get_region(self.1, egraph, subst);
                 let src_region = get_region("?src".parse().unwrap(), egraph, &match_result.substs[0]);
-                log::info!("Accelerator Regions: {} {}", dst_region, src_region);
+                // log::info!("Accelerator Regions: {} {}", dst_region, src_region);
                 if dst_region == src_region {
                     return "?x".parse::<Pattern<_>>().unwrap().apply_one(egraph, eclass, &match_result.substs[0]);
                 } else {
@@ -977,6 +977,45 @@ pub fn relu_on_vta() -> RW {
     rewrite!("relu-on-vta"; 
                "(relay-operator-call relay-relu ?x)"
             => "(accelerator-store vta-relu (accelerator-call vta-relu (accelerator-load vta-relu ?x) (shape 0)))")
+}
+
+pub fn conv2d_on_accel() -> RW {
+    rewrite!("conv2d-on-accel";
+            "(relay-operator-call relay-conv2d ?data ?kernel ?strides ?padding ?group ?channels ?kshape ?layout ?klayout)"
+            =>
+            // only load tensors not attributes (handled on host)
+            "(accelerator-store accel-conv2d (accelerator-call accel-conv2d 
+                                                  (accelerator-load accel-conv2d ?data) 
+                                                  (accelerator-load accel-conv2d ?kernel) 
+                                                  ?strides ?padding ?group ?channels ?kshape ?layout ?klayout (shape 0)))")
+}
+
+pub fn multiply_on_accel() -> RW {
+    rewrite!("multiply-on-accel";
+        "(relay-operator-call relay-multiply ?x ?y)"
+        =>
+        "(accelerator-store accel-multiply
+            (accelerator-call accel-multiply
+                (accelerator-load accel-multiply ?x)
+                (accelerator-load accel-multiply ?y) (shape 0)))")
+}
+
+pub fn add_on_accel() -> RW {
+    rewrite!("add-on-accel";
+        "(relay-operator-call relay-add ?x ?y)"
+        =>
+        "(accelerator-store accel-add
+            (accelerator-call accel-add
+                (accelerator-load accel-add ?x)
+                (accelerator-load accel-add ?y) (shape 0)))")
+}
+
+pub fn relu_on_accel() -> RW {
+    rewrite!("relu-on-accel";
+        "(relay-operator-call relay-relu ?x)"
+        =>
+        "(accelerator-store accel-relu
+            (accelerator-call accel-relu (accelerator-load accel-relu ?x) (shape 0)))")
 }
 
 pub fn dot_product_with_vta() -> RW {

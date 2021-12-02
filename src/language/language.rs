@@ -706,6 +706,10 @@ pub enum AcceleratorFunc {
     VTAConv1D,
     HlsCNNConv2D,
     VTARelu,
+    AccelConv2D,
+    AccelMultiply,
+    AccelRelu,
+    AccelAdd,
     // (accelerator-call flex-maxpool <access>)
     //
     // Compute's FlexASR's maxpool operator. The input access should be of
@@ -730,6 +734,10 @@ impl FromStr for AcceleratorFunc {
             "vta-conv1d" => Ok(AcceleratorFunc::VTAConv1D),
             "hlscnn-conv2d" => Ok(AcceleratorFunc::HlsCNNConv2D),
             "flex-maxpool" => Ok(AcceleratorFunc::FlexASRMaxPool),
+            "accel-conv2d" => Ok(AcceleratorFunc::AccelConv2D),
+            "accel-add" => Ok(AcceleratorFunc::AccelAdd),
+            "accel-relu" => Ok(AcceleratorFunc::AccelRelu),
+            "accel-multiply" => Ok(AcceleratorFunc::AccelMultiply),
             _ => Err(()),
         }
     }
@@ -748,6 +756,10 @@ impl Display for AcceleratorFunc {
                 AcceleratorFunc::VTAConv1D => "vta-conv1d",
                 AcceleratorFunc::HlsCNNConv2D => "hlscnn-conv2d",
                 AcceleratorFunc::FlexASRMaxPool => "flex-maxpool",
+                AcceleratorFunc::AccelConv2D => "accel-conv2d",
+                AcceleratorFunc::AccelAdd => "accel-add",
+                AcceleratorFunc::AccelRelu => "accel-relu",
+                AcceleratorFunc::AccelMultiply => "accel-multiply",
             }
         )
     }
@@ -1761,7 +1773,29 @@ impl egg::Analysis<Language> for MyAnalysis {
                     ),
                 };
                 match accelerator_func_data.pattern {
-                    crate::language::AcceleratorFunc::VTARelu => {
+                    crate::language::AcceleratorFunc::AccelMultiply
+                    | crate::language::AcceleratorFunc::AccelAdd => {
+                        match &egraph[ids[1]].data {
+                            MyAnalysisData::AccessPattern(access) => MyAnalysisData::AccessPattern(
+                                AccessPatternData {
+                                    shape: access.shape.clone(),
+                                    item_shape: access.item_shape.clone(),
+                                    relay_shape: Some(IxDyn(&access.as_vec()[..])),
+                                    contains_accelerator_calls: true,
+                                    zero_regions: HashMap::default(),
+                                }),
+                            MyAnalysisData::Shape(shape) => MyAnalysisData::AccessPattern(AccessPatternData {
+                                shape: shape.shape.clone(),
+                                item_shape: IxDyn(&[]),
+                                relay_shape: Some(shape.shape.clone()),
+                                contains_accelerator_calls: true,
+                                zero_regions: HashMap::default(),
+                            }),
+                            x => panic!("Invalid call to accelerator with analysis: {:?}", x),
+                        }
+                    }
+                    crate::language::AcceleratorFunc::VTARelu
+                    | crate::language::AcceleratorFunc::AccelRelu => {
                         match &egraph[ids[1]].data {
                             MyAnalysisData::AccessPattern(access) => MyAnalysisData::AccessPattern(AccessPatternData {
                                 shape: access.shape.clone(),
@@ -1865,7 +1899,8 @@ impl egg::Analysis<Language> for MyAnalysis {
 
                         MyAnalysisData::AccessPattern(access)
                     }
-                    crate::language::AcceleratorFunc::HlsCNNConv2D => {
+                    crate::language::AcceleratorFunc::HlsCNNConv2D
+                    | crate::language::AcceleratorFunc::AccelConv2D => {
                         let access = match ids[1..ids.len() - 1]
                             .iter()
                             .map(|id| &egraph[*id].data)
@@ -1914,6 +1949,10 @@ impl egg::Analysis<Language> for MyAnalysis {
                     | crate::language::AcceleratorFunc::VTARelu
                     | crate::language::AcceleratorFunc::VTADense => "vta",
                     crate::language::AcceleratorFunc::HlsCNNConv2D => "hlscnn",
+                    crate::language::AcceleratorFunc::AccelConv2D
+                    | crate::language::AcceleratorFunc::AccelMultiply
+                    | crate::language::AcceleratorFunc::AccelAdd
+                    | crate::language::AcceleratorFunc::AccelRelu => "accel",
                 };
                 MyAnalysisData::AcceleratorFunc(AcceleratorFuncData {
                     pattern: name.clone(),
