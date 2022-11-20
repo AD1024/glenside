@@ -1,7 +1,9 @@
 #![cfg(feature = "tvm")]
 use egg::{EGraph, Extractor, Runner};
+use glenside::extraction::ilp::{create_generic_egraph_lp_model, extract_single_expression};
 use glenside::extraction::AcceleratorCostFunction;
 use glenside::language::MyAnalysis;
+use rplex::Env;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -48,9 +50,27 @@ fn test_resnet_flexmatch() {
         &runner.egraph,
         AcceleratorCostFunction(runner.egraph.total_size() as f64),
     );
-    let (_cost, best) = extractor.find_best(id);
+    let lp_env = Env::new().unwrap();
+    let mut model = create_generic_egraph_lp_model(
+        &lp_env,
+        &runner.egraph,
+        |_, _, _| true,
+        &[id],
+        "resnet_lp",
+        true,
+    );
+    let result = model.problem.solve().unwrap();
+    let (_out_expr, _old_id_to_new_id_map) = extract_single_expression(
+        &model,
+        &result.variables,
+        EGraph::new(MyAnalysis {
+            name_to_shape: env,
+            name_to_dtype: HashMap::default(),
+        }),
+    );
+    // let (_cost, best) = extractor.find_best(id);
     // let json_dump = best.serialize();
-    let _model = best.pretty(80);
+    // let _model = best.pretty(80);
     // println!("{}", model);
     // println!("{}", _cost);
 }

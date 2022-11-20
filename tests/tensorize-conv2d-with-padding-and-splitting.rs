@@ -3,8 +3,10 @@
 use egg::Pattern;
 use egg::Searcher;
 use egg::{RecExpr, Runner};
+use glenside::extraction::ilp::ilp_extract;
 use glenside::language::rewrites::*;
 use glenside::language::*;
+use rplex::Env;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -49,7 +51,7 @@ fn conv2d_im2col_tensorize_to_smaller_array_with_padding_and_slicing() {
     map.insert("weights".to_string(), vec![3, 3, 3, 8]);
 
     let mut egraph = egg::EGraph::<Language, MyAnalysis>::new(MyAnalysis {
-        name_to_shape: map,
+        name_to_shape: map.clone(),
         name_to_dtype: HashMap::default(),
     });
     let id = egraph.add_expr(&expr);
@@ -107,20 +109,30 @@ fn conv2d_im2col_tensorize_to_smaller_array_with_padding_and_slicing() {
 
     runner.print_report();
 
-    let (cost, expr) = egg::Extractor::new(
+    let (egraph, _id_maps) = ilp_extract(
         &runner.egraph,
-        glenside::extraction::MonolithicCostFunction {
-            egraph: &runner.egraph,
-            systolic_array_configuration: (64, 64),
-            prefer_systolic_arrays_with_blocking: false,
-        },
-    )
-    .find_best(id);
+        |_, _, _| true,
+        "lp_extract",
+        &map,
+        &[id],
+        true,
+    );
 
-    println!("{}", expr.pretty(80));
-    println!("{:?}", cost);
+    println!("{:?}", egraph);
+    // let (cost, expr) = egg::Extractor::new(
+    //     &runner.egraph,
+    //     glenside::extraction::MonolithicCostFunction {
+    //         egraph: &runner.egraph,
+    //         systolic_array_configuration: (64, 64),
+    //         prefer_systolic_arrays_with_blocking: false,
+    //     },
+    // )
+    // .find_best(id);
 
-    assert!(cost < glenside::extraction::MonolithicCostFunction::INFINITY_VALUE);
+    // println!("{}", expr.pretty(80));
+    // println!("{:?}", cost);
+
+    // assert!(cost < glenside::extraction::MonolithicCostFunction::INFINITY_VALUE);
 
     "
 (access-transpose

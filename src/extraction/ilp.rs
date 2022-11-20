@@ -18,8 +18,8 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::f64::INFINITY;
+use std::hash::{Hash, Hasher};
 
 use egg::{Id, Language as LanguageTrait};
 use log::warn;
@@ -309,7 +309,11 @@ pub fn create_generic_egraph_lp_model<'a>(
         }
         {
             let bq_name = format!("bq_{}", canonical_id);
-            let bq_var = if fractional { var!(bq_name -> 1.0 as Continuous) } else { var!(bq_name -> 1.0 as Binary) };
+            let bq_var = if fractional {
+                var!(bq_name -> 1.0 as Continuous)
+            } else {
+                var!(bq_name -> 1.0 as Binary)
+            };
             let column_index = problem.add_variable(bq_var).unwrap();
             assert!(!bq_vars.contains_key(&canonical_id));
             bq_vars.insert(canonical_id, column_index);
@@ -319,7 +323,11 @@ pub fn create_generic_egraph_lp_model<'a>(
             let topo_sort_var_name = format!("topo_sort_{}", canonical_id);
             // TODO(@gussmith23) the `as f64` thing here is potentially a bug
             let topo_sort_var = Variable::new(
-                if fractional { VariableType::Continuous } else { VariableType::Integer },
+                if false {
+                    VariableType::Continuous
+                } else {
+                    VariableType::Integer
+                },
                 1.0,
                 0.0,
                 number_of_classes_f64,
@@ -340,7 +348,11 @@ pub fn create_generic_egraph_lp_model<'a>(
             let mut s = DefaultHasher::new();
             enode.hash(&mut s);
             let bn_name = "bn_".to_owned() + &s.finish().to_string();
-            let bn_var = if fractional { var!(bn_name -> 1.0 as Continuous) } else { var!(bn_name -> 1.0 as Binary) };
+            let bn_var = if fractional {
+                var!(bn_name -> 1.0 as Continuous)
+            } else {
+                var!(bn_name -> 1.0 as Binary)
+            };
             let column_index = problem.add_variable(bn_var).unwrap();
             assert!(!bn_vars.contains_key(&enode));
             bn_vars.insert(enode, column_index);
@@ -523,7 +535,7 @@ pub fn extract_single_expression(
             if egraph_lp_problem.fractional_extraction {
                 match results[bq_column_index] {
                     VariableValue::Continuous(value) => value > 0.0,
-                    _ => panic!()
+                    _ => panic!(),
                 }
             } else {
                 match results[bq_column_index] {
@@ -537,11 +549,16 @@ pub fn extract_single_expression(
         .collect::<Vec<_>>();
     // Finally, sort by variable value.
     if egraph_lp_problem.fractional_extraction {
-        eclasses_in_topological_order.sort_unstable_by(|&(_eclass_id_x, &column_index_i): &(&Id, &usize), &(_eclass_id_y, &column_index_j): &(&Id, &usize)|
-        match (results[column_index_i], results[column_index_j]) {
-            (VariableValue::Continuous(i), VariableValue::Continuous(j)) => i.partial_cmp(&j).unwrap(),
-            _ => panic!(),
-        },)
+        eclasses_in_topological_order.sort_unstable_by_key(
+            |&(_eclass_id_x, &column_index_i): &(&Id, &usize)| match results[column_index_i] {
+                VariableValue::Continuous(i) => i as i32,
+                VariableValue::Integer(i) => i,
+                _ => panic!(),
+            },
+        );
+        eclasses_in_topological_order
+            .iter()
+            .for_each(|(_x, y)| println!("{:?}", results[**y]));
     } else {
         eclasses_in_topological_order.sort_unstable_by_key(
             |&(_eclass_id, &column_index): &(&Id, &usize)| match results[column_index] {
@@ -549,6 +566,9 @@ pub fn extract_single_expression(
                 _ => panic!(),
             },
         );
+        eclasses_in_topological_order
+            .iter()
+            .for_each(|(_x, y)| println!("{:?}", results[**y]));
     }
 
     let mut old_id_to_new_id_map = HashMap::new();
@@ -559,6 +579,7 @@ pub fn extract_single_expression(
         debug_assert_eq!(
             match results[*egraph_lp_problem.bq_vars.get(&id).unwrap()] {
                 VariableValue::Binary(b) => b,
+                VariableValue::Continuous(c) => c > 0.0,
                 _ => panic!(),
             },
             true
@@ -578,9 +599,7 @@ pub fn extract_single_expression(
                     // it to look up the result value.
                     .and_then(|&bn_idx: &usize| match results[bn_idx] {
                         VariableValue::Binary(b) => Some(b),
-                        VariableValue::Continuous(c) => {
-                            Some(c > 0.0)
-                        }
+                        VariableValue::Continuous(c) => Some(c > 0.0),
                         _ => panic!(),
                     })
                     .or(Some(false))
@@ -596,7 +615,34 @@ pub fn extract_single_expression(
         // will guarantee that its dependent eclasses are extracted. So this
         // check truly just exists because of my own curiosity...if it fails, it
         // shouldn't actually break anything, other than my hypothesis.
-        debug_assert!(variants.len() == 1, "{:?}", variants);
+        // debug_assert!(variants.len() == 1, "{:?}", variants);
+        if variants.len() > 0 {
+            let _x = egraph_lp_problem.egraph[id]
+                .nodes
+                .iter()
+                // Filter out enodes that weren't selected.
+                .filter(|node| {
+                    egraph_lp_problem
+                        .bn_vars
+                        .get(node)
+                        // If we get a valid index (i.e. there's a variable for this
+                        // enode, because not all enodes have variables!) then use
+                        // it to look up the result value.
+                        .and_then(|&bn_idx: &usize| match results[bn_idx] {
+                            VariableValue::Binary(b) => Some(b),
+                            VariableValue::Continuous(c) => {
+                                if c > 0.0 {
+                                    println!("{} > 0.0", c);
+                                }
+                                Some(c > 0.0)
+                            }
+                            _ => panic!(),
+                        })
+                        .or(Some(false))
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+        }
 
         let selected_variant = variants[0];
 
@@ -605,7 +651,14 @@ pub fn extract_single_expression(
         let converted_node = selected_variant.clone().map_children(|id| {
             *old_id_to_new_id_map
                 .get(&egraph_lp_problem.egraph.find(id.clone()))
-                .unwrap_or_else(|| panic!("id {} in enode {:?} not found!", id, selected_variant))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "id {} in enode {:?} not found! {:?}",
+                        id,
+                        selected_variant,
+                        results[*egraph_lp_problem.bq_vars.get(&id).unwrap()]
+                    )
+                })
         });
 
         let new_id = expr.add(converted_node);
@@ -617,6 +670,29 @@ pub fn extract_single_expression(
     }
 
     (expr, old_id_to_new_id_map)
+}
+
+pub fn ilp_extract(
+    egraph: &EGraph,
+    filter_enode: impl Fn(&Language, Id, &EGraph) -> bool,
+    name: &'static str,
+    name_to_shape: &HashMap<String, Vec<usize>>,
+    roots: &[Id],
+    fractional: bool,
+) -> (EGraph, HashMap<Id, Id>) {
+    let env = Env::new().unwrap();
+    let mut model =
+        create_generic_egraph_lp_model(&env, egraph, filter_enode, roots, name, fractional);
+    let result = model.problem.solve().unwrap();
+    let (_out_expr, _old_id_to_new_id_map) = extract_single_expression(
+        &model,
+        &result.variables,
+        EGraph::new(MyAnalysis {
+            name_to_shape: name_to_shape.clone(),
+            name_to_dtype: HashMap::default(),
+        }),
+    );
+    (_out_expr, _old_id_to_new_id_map)
 }
 
 #[cfg(test)]
@@ -640,7 +716,7 @@ mod tests {
 
         let env = Env::new().unwrap();
         let mut model =
-            create_generic_egraph_lp_model(&env, &egraph, |_, _, _| true, &[id], "trivial", false);
+            create_generic_egraph_lp_model(&env, &egraph, |_, _, _| true, &[id], "trivial", true);
         let result = model.problem.solve().unwrap();
 
         let (out_expr, _old_id_to_new_id_map) = extract_single_expression(
