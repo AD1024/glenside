@@ -19,6 +19,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::f64::INFINITY;
 
 use egg::{Id, Language as LanguageTrait};
 use log::warn;
@@ -263,6 +264,7 @@ pub struct EGraphLpProblem<'a> {
     /// Variables used to ensure that the extracted eclasses can be
     /// topologically sorted.
     pub topo_sort_vars: HashMap<Id, usize>,
+    pub fractional_extraction: bool,
 }
 
 /// From an egraph, create an LP model with a few useful base constraints
@@ -284,6 +286,7 @@ pub fn create_generic_egraph_lp_model<'a>(
     filter_enode: impl Fn(&Language, Id, &EGraph) -> bool,
     roots: &[Id],
     name: &'static str,
+    fractional: bool,
 ) -> EGraphLpProblem<'a> {
     let mut problem = Problem::new(&env, name).unwrap();
 
@@ -306,7 +309,7 @@ pub fn create_generic_egraph_lp_model<'a>(
         }
         {
             let bq_name = format!("bq_{}", canonical_id);
-            let bq_var = var!(bq_name -> 1.0 as Binary);
+            let bq_var = if fractional { var!(bq_name -> 1.0 as Continuous) } else { var!(bq_name -> 1.0 as Binary) };
             let column_index = problem.add_variable(bq_var).unwrap();
             assert!(!bq_vars.contains_key(&canonical_id));
             bq_vars.insert(canonical_id, column_index);
@@ -316,7 +319,7 @@ pub fn create_generic_egraph_lp_model<'a>(
             let topo_sort_var_name = format!("topo_sort_{}", canonical_id);
             // TODO(@gussmith23) the `as f64` thing here is potentially a bug
             let topo_sort_var = Variable::new(
-                VariableType::Integer,
+                if fractional { VariableType::Continuous } else { VariableType::Integer },
                 1.0,
                 0.0,
                 number_of_classes_f64,
@@ -337,7 +340,7 @@ pub fn create_generic_egraph_lp_model<'a>(
             let mut s = DefaultHasher::new();
             enode.hash(&mut s);
             let bn_name = "bn_".to_owned() + &s.finish().to_string();
-            let bn_var = var!(bn_name -> 1.0 as Binary);
+            let bn_var = if fractional { var!(bn_name -> 1.0 as Continuous) } else { var!(bn_name -> 1.0 as Binary) };
             let column_index = problem.add_variable(bn_var).unwrap();
             assert!(!bn_vars.contains_key(&enode));
             bn_vars.insert(enode, column_index);
@@ -488,6 +491,7 @@ pub fn create_generic_egraph_lp_model<'a>(
         bq_vars,
         bn_vars,
         topo_sort_vars,
+        fractional_extraction: fractional,
     }
 }
 
@@ -516,21 +520,36 @@ pub fn extract_single_expression(
             // Get the bq variable for this eclass (i.e. get its column index)
             // and use that to index into the solution.
             let bq_column_index = egraph_lp_problem.bq_vars[&eclass_id];
-            match results[bq_column_index] {
-                // We filter out this eclass if this bq variable indicates that
-                // this eclass wasn't selected.
-                VariableValue::Binary(b) => b,
-                _ => panic!(),
+            if egraph_lp_problem.fractional_extraction {
+                match results[bq_column_index] {
+                    VariableValue::Continuous(value) => value > 0.0,
+                    _ => panic!()
+                }
+            } else {
+                match results[bq_column_index] {
+                    // We filter out this eclass if this bq variable indicates that
+                    // this eclass wasn't selected.
+                    VariableValue::Binary(b) => b,
+                    _ => panic!(),
+                }
             }
         })
         .collect::<Vec<_>>();
     // Finally, sort by variable value.
-    eclasses_in_topological_order.sort_unstable_by_key(
-        |&(_eclass_id, &column_index): &(&Id, &usize)| match results[column_index] {
-            VariableValue::Integer(i) => i,
+    if egraph_lp_problem.fractional_extraction {
+        eclasses_in_topological_order.sort_unstable_by(|&(_eclass_id_x, &column_index_i): &(&Id, &usize), &(_eclass_id_y, &column_index_j): &(&Id, &usize)|
+        match (results[column_index_i], results[column_index_j]) {
+            (VariableValue::Continuous(i), VariableValue::Continuous(j)) => i.partial_cmp(&j).unwrap(),
             _ => panic!(),
-        },
-    );
+        },)
+    } else {
+        eclasses_in_topological_order.sort_unstable_by_key(
+            |&(_eclass_id, &column_index): &(&Id, &usize)| match results[column_index] {
+                VariableValue::Integer(i) => i,
+                _ => panic!(),
+            },
+        );
+    }
 
     let mut old_id_to_new_id_map = HashMap::new();
     let mut expr = egraph;
@@ -559,6 +578,9 @@ pub fn extract_single_expression(
                     // it to look up the result value.
                     .and_then(|&bn_idx: &usize| match results[bn_idx] {
                         VariableValue::Binary(b) => Some(b),
+                        VariableValue::Continuous(c) => {
+                            Some(c > 0.0)
+                        }
                         _ => panic!(),
                     })
                     .or(Some(false))
@@ -618,7 +640,7 @@ mod tests {
 
         let env = Env::new().unwrap();
         let mut model =
-            create_generic_egraph_lp_model(&env, &egraph, |_, _, _| true, &[id], "trivial");
+            create_generic_egraph_lp_model(&env, &egraph, |_, _, _| true, &[id], "trivial", false);
         let result = model.problem.solve().unwrap();
 
         let (out_expr, _old_id_to_new_id_map) = extract_single_expression(
